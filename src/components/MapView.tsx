@@ -108,7 +108,9 @@ export function MapView({ state, mode, view, validSet, replayStep, onNodeClick }
 
   const cal = MAP.calibration;
   const overlayTransform =
-    view === 'real' ? `translate(${cal.offsetX} ${cal.offsetY}) scale(${cal.scale})` : undefined;
+    view === 'real'
+      ? `translate(${cal.offsetX} ${cal.offsetY}) scale(${cal.scaleX} ${cal.scaleY})`
+      : undefined;
 
   return (
     <div className="mapwrap">
