@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import './index.css';
 import type { GameState, Transport } from './types';
 import { useGame } from './state/useGame';
@@ -15,14 +15,22 @@ export default function App() {
   const { state } = game;
 
   const [tab, setTab] = useState<Tab>(state.started ? 'play' : 'setup');
-  const [view, setView] = useState<MapViewKind>('schematic');
+  const [view, setView] = useState<MapViewKind>(
+    () => (localStorage.getItem('sy_view') as MapViewKind) || 'schematic',
+  );
+  const [imageOpacity, setImageOpacity] = useState<number>(() => {
+    const v = parseFloat(localStorage.getItem('sy_imgop') || '1');
+    return Number.isFinite(v) ? v : 1;
+  });
   const [selTransport, setSelTransport] = useState<Transport | null>(null);
   const [replayStep, setReplayStep] = useState(state.history.length);
   const [replayPlaying, setReplayPlaying] = useState(false);
   const [setupTarget, setSetupTarget] = useState<string | null>('X');
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // stazioni cliccabili nella vista corrente
+  useEffect(() => { localStorage.setItem('sy_view', view); }, [view]);
+  useEffect(() => { localStorage.setItem('sy_imgop', String(imageOpacity)); }, [imageOpacity]);
+
   const validSet = useMemo(() => {
     if (tab !== 'play' || !state.started || state.over) return null;
     const actor = currentActor(state);
@@ -32,10 +40,7 @@ export default function App() {
 
   const onNodeClick = (id: number) => {
     if (tab === 'setup') {
-      if (!setupTarget) {
-        game.setFlash('Prima seleziona un giocatore nella lista');
-        return;
-      }
+      if (!setupTarget) { game.setFlash('Prima seleziona un giocatore nella lista'); return; }
       game.setStart(setupTarget, id);
       const next = state.players.find((p) => p.id !== setupTarget && p.start == null);
       setSetupTarget(next ? next.id : null);
@@ -50,11 +55,7 @@ export default function App() {
     if (t === 'play') setSelTransport(null);
     setTab(t);
   };
-  const begin = () => {
-    game.begin();
-    setSelTransport(null);
-    setTab('play');
-  };
+  const begin = () => { game.begin(); setSelTransport(null); setTab('play'); };
 
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
@@ -75,9 +76,7 @@ export default function App() {
           setTab(obj.started ? 'play' : 'setup');
           game.setFlash('Partita importata');
         }
-      } catch {
-        game.setFlash('File non valido');
-      }
+      } catch { game.setFlash('File non valido'); }
     };
     r.readAsText(f);
     e.target.value = '';
@@ -86,25 +85,23 @@ export default function App() {
   return (
     <div className="app">
       <header>
-        <h1>Scotland <span>Yard</span> · Tracker</h1>
+        <h1>Scotland <span>Yard</span></h1>
         <nav className="tabs">
           {(['setup', 'play', 'replay'] as Tab[]).map((t) => (
             <button key={t} className={tab === t ? 'active' : ''} onClick={() => goTo(t)}>
-              {t === 'setup' ? 'Setup' : t === 'play' ? 'Partita' : 'Replay'}
+              {t === 'setup' ? '⚙ Setup' : t === 'play' ? '🎯 Partita' : '⏪ Replay'}
             </button>
           ))}
         </nav>
         <div className="spacer" />
         <div className="topbtns">
-          <button onClick={exportJson}>⬇ Esporta</button>
-          <button onClick={() => fileRef.current?.click()}>⬆ Importa</button>
+          <button onClick={exportJson} title="Salva la partita in un file">⬇ Esporta</button>
+          <button onClick={() => fileRef.current?.click()} title="Carica una partita salvata">⬆ Importa</button>
           <button
+            className="danger"
             onClick={() => {
-              if (confirm('Nuova partita? Lo stato attuale verrà perso (puoi prima esportare).')) {
-                game.reset();
-                setTab('setup');
-                setSetupTarget('X');
-                setSelTransport(null);
+              if (confirm('Iniziare una nuova partita? Lo stato attuale verrà perso (puoi prima esportarlo).')) {
+                game.reset(); setTab('setup'); setSetupTarget('X'); setSelTransport(null);
               }
             }}
           >
@@ -118,12 +115,24 @@ export default function App() {
           <div className="mapcontrols">
             <div className="seg">
               <button className={view === 'schematic' ? 'active' : ''} onClick={() => setView('schematic')}>
-                Schematica
+                Schema
               </button>
               <button className={view === 'real' ? 'active' : ''} onClick={() => setView('real')}>
-                Immagine reale
+                Mappa reale
               </button>
             </div>
+            {view === 'real' && (
+              <label className="opacity-ctl" title="Opacità immagine">
+                <span>🖼</span>
+                <input
+                  type="range"
+                  min={15}
+                  max={100}
+                  value={Math.round(imageOpacity * 100)}
+                  onChange={(e) => setImageOpacity(Number(e.target.value) / 100)}
+                />
+              </label>
+            )}
           </div>
           <MapView
             state={state}
@@ -131,6 +140,7 @@ export default function App() {
             view={view}
             validSet={validSet}
             replayStep={replayStep}
+            imageOpacity={imageOpacity}
             onNodeClick={onNodeClick}
           />
         </div>
@@ -155,6 +165,7 @@ export default function App() {
               toggleDoubleMove={game.toggleDoubleMove}
               undo={game.undo}
               goReplay={() => goTo('replay')}
+              validCount={validSet ? validSet.size : null}
             />
           )}
           {tab === 'replay' && (

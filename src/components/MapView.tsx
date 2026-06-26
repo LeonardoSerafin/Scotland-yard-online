@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { GameState, Move, Player } from '../types';
 import { STATIONS, STATION_BY_ID } from '../data/stations';
 import { EDGES } from '../data/connections';
@@ -14,8 +14,11 @@ interface Props {
   view: MapViewKind;
   validSet: Set<number> | null;
   replayStep: number;
+  imageOpacity: number;
   onNodeClick: (id: number) => void;
 }
+
+interface VB { x: number; y: number; w: number; h: number }
 
 const EDGE_COLOR: Record<string, string> = {
   taxi: '#f2c200',
@@ -25,60 +28,98 @@ const EDGE_COLOR: Record<string, string> = {
 };
 const EDGE_ORDER = ['water', 'taxi', 'bus', 'underground'];
 
-export function MapView({ state, mode, view, validSet, replayStep, onNodeClick }: Props) {
-  const { width, height } = MAP.viewBox;
-  const [vb, setVb] = useState({ x: 0, y: 0, w: width, h: height });
+const W = MAP.viewBox.width;
+const H = MAP.viewBox.height;
+const ASPECT = H / W;
+const MIN_W = W * 0.16; // zoom massimo
+const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+
+/** Mantiene il viewBox sempre dentro la mappa: niente "esplosioni". */
+function normVB(x: number, y: number, w: number): VB {
+  w = clamp(w, MIN_W, W);
+  const h = w * ASPECT;
+  return { x: clamp(x, 0, W - w), y: clamp(y, 0, H - h), w, h };
+}
+
+export function MapView({ state, mode, view, validSet, replayStep, imageOpacity, onNodeClick }: Props) {
+  const [vb, setVbState] = useState<VB>(() => normVB(0, 0, W));
   const svgRef = useRef<SVGSVGElement>(null);
-  const drag = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
+  const setVb = (v: VB) => setVbState(v);
 
-  // ---- pan/zoom: il pan parte SOLO dallo sfondo, mai dai nodi ----
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent) => {
-      const target = e.target as Element;
-      if (target.closest('[data-node]')) return; // click su nodo: non fare pan
-      drag.current = { x: e.clientX, y: e.clientY, vx: vb.x, vy: vb.y };
-      (e.currentTarget as Element).setAttribute('data-grab', '1');
-    },
-    [vb],
-  );
-  const onPointerMove = useCallback((e: React.PointerEvent) => {
-    if (!drag.current || !svgRef.current) return;
-    const r = svgRef.current.getBoundingClientRect();
-    setVb((p) => ({
-      ...p,
-      x: drag.current!.vx - (e.clientX - drag.current!.x) * (p.w / r.width),
-      y: drag.current!.vy - (e.clientY - drag.current!.y) * (p.h / r.height),
-    }));
-  }, []);
-  const endDrag = useCallback((e: React.PointerEvent) => {
-    drag.current = null;
-    (e.currentTarget as Element).removeAttribute('data-grab');
-  }, []);
+  // gesture (pointer multipli per pinch)
+  const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pan = useRef<{ cx: number; cy: number; vb: VB } | null>(null);
+  const pinch = useRef<{ dist: number; vb: VB; mx: number; my: number } | null>(null);
 
-  const onWheel = useCallback((e: React.WheelEvent) => {
-    if (!svgRef.current) return;
-    const r = svgRef.current.getBoundingClientRect();
-    setVb((p) => {
-      const cx = p.x + ((e.clientX - r.left) / r.width) * p.w;
-      const cy = p.y + ((e.clientY - r.top) / r.height) * p.h;
-      const f = e.deltaY > 0 ? 1.12 : 0.89;
-      const nw = Math.min(width * 2.4, Math.max(width * 0.18, p.w * f));
-      const nh = nw * (p.h / p.w);
-      return { x: cx - (cx - p.x) * (nw / p.w), y: cy - (cy - p.y) * (nh / p.h), w: nw, h: nh };
-    });
-  }, [width]);
+  const rectOf = () => svgRef.current!.getBoundingClientRect();
+  const dist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+    Math.hypot(a.x - b.x, a.y - b.y);
 
-  const zoom = (f: number) =>
-    setVb((p) => {
-      const cx = p.x + p.w / 2;
-      const cy = p.y + p.h / 2;
-      const nw = Math.min(width * 2.4, Math.max(width * 0.18, p.w * f));
-      const nh = nw * (p.h / p.w);
-      return { x: cx - (cx - p.x) * (nw / p.w), y: cy - (cy - p.y) * (nh / p.h), w: nw, h: nh };
-    });
-  const fit = () => setVb({ x: 0, y: 0, w: width, h: height });
+  const onPointerDown = (e: React.PointerEvent) => {
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const onNode = (e.target as Element).closest('[data-node]');
+    if (pointers.current.size >= 2) {
+      const [p1, p2] = [...pointers.current.values()];
+      pinch.current = { dist: dist(p1, p2) || 1, vb: { ...vb }, mx: (p1.x + p2.x) / 2, my: (p1.y + p2.y) / 2 };
+      pan.current = null;
+    } else if (!onNode) {
+      pan.current = { cx: e.clientX, cy: e.clientY, vb: { ...vb } };
+    }
+  };
 
-  // ---- token (posizioni dei giocatori) ----
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!pointers.current.has(e.pointerId)) return;
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const r = rectOf();
+    if (pinch.current && pointers.current.size >= 2) {
+      const [p1, p2] = [...pointers.current.values()];
+      const d = dist(p1, p2) || 1;
+      const s = pinch.current;
+      const w = s.vb.w * (s.dist / d);
+      const fx = (s.mx - r.left) / r.width;
+      const fy = (s.my - r.top) / r.height;
+      const sx = s.vb.x + fx * s.vb.w;
+      const sy = s.vb.y + fy * s.vb.h;
+      setVb(normVB(sx - fx * w, sy - fy * (w * ASPECT), w));
+    } else if (pan.current) {
+      const s = pan.current;
+      setVb(normVB(
+        s.vb.x - (e.clientX - s.cx) * (s.vb.w / r.width),
+        s.vb.y - (e.clientY - s.cy) * (s.vb.h / r.height),
+        s.vb.w,
+      ));
+    }
+  };
+
+  const onPointerEnd = (e: React.PointerEvent) => {
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size < 2) pinch.current = null;
+    if (pointers.current.size === 1) {
+      const [p] = [...pointers.current.values()];
+      pan.current = { cx: p.x, cy: p.y, vb: { ...vb } };
+    } else if (pointers.current.size === 0) {
+      pan.current = null;
+    }
+  };
+
+  const onWheel = (e: React.WheelEvent) => {
+    const r = rectOf();
+    const fx = (e.clientX - r.left) / r.width;
+    const fy = (e.clientY - r.top) / r.height;
+    const sx = vb.x + fx * vb.w;
+    const sy = vb.y + fy * vb.h;
+    const w = vb.w * (e.deltaY > 0 ? 1.15 : 0.87);
+    setVb(normVB(sx - fx * w, sy - fy * (w * ASPECT), w));
+  };
+
+  const zoomBy = (f: number) => {
+    const cx = vb.x + vb.w / 2;
+    const cy = vb.y + vb.h / 2;
+    const w = vb.w * f;
+    setVb(normVB(cx - w / 2, cy - (w * ASPECT) / 2, w));
+  };
+  const fit = () => setVb(normVB(0, 0, W));
+
   const tokens = useMemo(() => {
     const byNode: Record<number, Player[]> = {};
     if (mode === 'replay') {
@@ -95,14 +136,11 @@ export function MapView({ state, mode, view, validSet, replayStep, onNodeClick }
     return byNode;
   }, [state, mode, replayStep]);
 
-  // ---- segmenti di percorso ----
   const segs: { move: Move; highlight: boolean }[] = useMemo(() => {
     if (mode === 'replay') {
       return state.history.slice(0, replayStep).map((m, i) => ({ move: m, highlight: i === replayStep - 1 }));
     }
-    if (state.history.length) {
-      return [{ move: state.history[state.history.length - 1], highlight: true }];
-    }
+    if (state.history.length) return [{ move: state.history[state.history.length - 1], highlight: true }];
     return [];
   }, [state.history, mode, replayStep]);
 
@@ -121,14 +159,23 @@ export function MapView({ state, mode, view, validSet, replayStep, onNodeClick }
         preserveAspectRatio="xMidYMid meet"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerLeave={endDrag}
+        onPointerUp={onPointerEnd}
+        onPointerCancel={onPointerEnd}
+        onPointerLeave={onPointerEnd}
         onWheel={onWheel}
       >
         <rect data-bg x={-4000} y={-4000} width={12000} height={12000} fill="#0a0d16" />
 
         {view === 'real' && (
-          <image href={MAP.boardImage} x={0} y={0} width={width} height={height} preserveAspectRatio="xMidYMid meet" />
+          <image
+            href={MAP.boardImage}
+            x={0}
+            y={0}
+            width={W}
+            height={H}
+            opacity={imageOpacity}
+            preserveAspectRatio="xMidYMid meet"
+          />
         )}
 
         <g transform={overlayTransform}>
@@ -153,7 +200,6 @@ export function MapView({ state, mode, view, validSet, replayStep, onNodeClick }
               }),
             )}
 
-          {/* segmenti percorso */}
           {segs.map(({ move, highlight }, i) => {
             if (move.from == null) return null;
             const A = STATION_BY_ID[move.from];
@@ -176,7 +222,6 @@ export function MapView({ state, mode, view, validSet, replayStep, onNodeClick }
             );
           })}
 
-          {/* nodi */}
           {STATIONS.map((s) => {
             const multi = s.t.length > 1;
             const isValid = validSet?.has(s.id) ?? false;
@@ -197,13 +242,13 @@ export function MapView({ state, mode, view, validSet, replayStep, onNodeClick }
                 style={{
                   cursor: clickable ? 'pointer' : 'default',
                   pointerEvents: clickable ? 'auto' : 'none',
-                  opacity: dimmed ? (view === 'real' ? 0.45 : 0.3) : 1,
+                  opacity: dimmed ? (view === 'real' ? 0.5 : 0.3) : 1,
                 }}
               >
                 <circle
                   cx={s.x}
                   cy={s.y}
-                  r={multi ? 15 : 13}
+                  r={isValid ? (multi ? 17 : 15) : multi ? 15 : 13}
                   fill={fill}
                   stroke={isValid ? '#27c281' : '#0a0d16'}
                   strokeWidth={isValid ? 4 : 1.5}
@@ -224,7 +269,6 @@ export function MapView({ state, mode, view, validSet, replayStep, onNodeClick }
             );
           })}
 
-          {/* token giocatori */}
           {Object.entries(tokens).flatMap(([node, arr]) => {
             const s = STATION_BY_ID[Number(node)];
             if (!s) return [];
@@ -260,8 +304,8 @@ export function MapView({ state, mode, view, validSet, replayStep, onNodeClick }
       </svg>
 
       <div className="zoombtns">
-        <button onClick={() => zoom(0.82)} aria-label="Zoom +">+</button>
-        <button onClick={() => zoom(1.22)} aria-label="Zoom -">−</button>
+        <button onClick={() => zoomBy(0.8)} aria-label="Zoom +">+</button>
+        <button onClick={() => zoomBy(1.25)} aria-label="Zoom -">−</button>
         <button onClick={fit} aria-label="Adatta" style={{ fontSize: 13 }}>⤢</button>
       </div>
 

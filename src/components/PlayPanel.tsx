@@ -10,14 +10,17 @@ interface Props {
   toggleDoubleMove: () => void;
   undo: () => void;
   goReplay: () => void;
+  validCount: number | null;
 }
 
 const DET_TRANSPORTS: Transport[] = ['taxi', 'bus', 'underground'];
 const MRX_TRANSPORTS: Transport[] = ['taxi', 'bus', 'underground', 'black'];
 
-export function PlayPanel({ state, selTransport, setSelTransport, toggleDoubleMove, undo, goReplay }: Props) {
+export function PlayPanel({
+  state, selTransport, setSelTransport, toggleDoubleMove, undo, goReplay, validCount,
+}: Props) {
   if (!state.started) {
-    return <div className="notice">Nessuna partita avviata. Vai su « Setup » e premi Inizia partita.</div>;
+    return <div className="notice">Nessuna partita avviata. Vai su « Setup » e premi <b>Inizia partita</b>.</div>;
   }
 
   const actor = currentActor(state);
@@ -26,27 +29,24 @@ export function PlayPanel({ state, selTransport, setSelTransport, toggleDoubleMo
     <>
       {state.over && state.result ? (
         <div className={'banner ' + (state.result.who === 'det' ? 'cap' : 'win')}>
-          {(state.result.who === 'det' ? '🚓 Investigatori vincono — ' : '🕵️ Mr X vince — ') + state.result.msg}
+          {(state.result.who === 'det' ? '🚓 Vincono gli investigatori — ' : '🕵️ Vince Mr X — ') + state.result.msg}
         </div>
       ) : (
         actor && (
-          <section className="card">
-            <h3>Turno {state.round} / {state.config.totalRounds}</h3>
+          <section className="card turncard">
             <div className="turnhead">
               <span className="dot big" style={{ background: actor.isMrX ? MRX_COLOR : actor.color }} />
-              <b>Tocca a {actor.name}</b>
+              <div>
+                <b>Tocca a {actor.name}</b>
+                <div className="mini">Turno {state.round} / {state.config.totalRounds}</div>
+              </div>
             </div>
-            {actor.isMrX && (
-              <p className="hint">
-                Mossa #{state.mrxMoveNo + 1} di Mr X.{' '}
-                {state.config.revealRounds.includes(state.mrxMoveNo + 1) ? (
-                  <b style={{ color: '#ff8fa6' }}>⚑ Turno di rivelazione: mostra la posizione agli investigatori.</b>
-                ) : (
-                  'Posizione nascosta.'
-                )}
-              </p>
+
+            {actor.isMrX && state.config.revealRounds.includes(state.mrxMoveNo + 1) && (
+              <div className="reveal-badge">⚑ Turno di rivelazione — mostra la posizione di Mr X agli investigatori</div>
             )}
 
+            <div className="step-label">1 · Scegli il mezzo</div>
             <div className="transports">
               {(actor.isMrX ? MRX_TRANSPORTS : DET_TRANSPORTS).map((t) => {
                 const n = actor.tickets[t] ?? 0;
@@ -59,7 +59,7 @@ export function PlayPanel({ state, selTransport, setSelTransport, toggleDoubleMo
                     onClick={() => setSelTransport(selTransport === t ? null : t)}
                   >
                     {TRANSPORT_INFO[t].label}
-                    <small> ({n})</small>
+                    <small> {n}</small>
                     <span className="c" style={{ background: TRANSPORT_INFO[t].color }} />
                   </button>
                 );
@@ -68,23 +68,27 @@ export function PlayPanel({ state, selTransport, setSelTransport, toggleDoubleMo
 
             {actor.isMrX && (
               <button
-                className="btn sec"
-                style={state.doubleActive ? { borderColor: MRX_COLOR, color: '#ff8fa6' } : undefined}
+                className={'btn sec double-btn' + (state.doubleActive ? ' on' : '')}
                 onClick={toggleDoubleMove}
               >
                 {state.doubleActive
                   ? `✓ Doppia mossa attiva (${actor.secondDone ? '2ª mossa' : '1ª mossa'})`
-                  : `⏩ Usa doppia mossa (${actor.tickets.double ?? 0})`}
+                  : `⏩ Doppia mossa (${actor.tickets.double ?? 0} rimaste)`}
               </button>
             )}
 
-            <p className="hint" style={{ marginTop: 8 }}>
-              {selTransport ? (
-                <>Clicca una <b style={{ color: '#27c281' }}>stazione evidenziata</b> sulla mappa.</>
+            <div className="step-label">2 · Tocca la destinazione</div>
+            {selTransport ? (
+              validCount && validCount > 0 ? (
+                <p className="hint ok-hint">
+                  {validCount} {validCount === 1 ? 'stazione raggiungibile' : 'stazioni raggiungibili'} evidenziate in verde sulla mappa. Toccane una.
+                </p>
               ) : (
-                'Seleziona un mezzo, poi clicca la destinazione.'
-              )}
-            </p>
+                <p className="hint warn-hint">Nessuna stazione raggiungibile con {TRANSPORT_INFO[selTransport].label}. Scegli un altro mezzo.</p>
+              )
+            ) : (
+              <p className="hint">Seleziona prima un mezzo qui sopra.</p>
+            )}
           </section>
         )
       )}
@@ -93,7 +97,7 @@ export function PlayPanel({ state, selTransport, setSelTransport, toggleDoubleMo
         <h3>Giocatori</h3>
         {state.players.map((p) => {
           const isTurn = !state.over && actor?.id === p.id;
-          const order: Transport[] | string[] = p.isMrX
+          const order: string[] = p.isMrX
             ? ['taxi', 'bus', 'underground', 'black', 'double']
             : ['taxi', 'bus', 'underground'];
           return (
@@ -119,8 +123,8 @@ export function PlayPanel({ state, selTransport, setSelTransport, toggleDoubleMo
       </section>
 
       <div className="row">
-        <button className="btn sec" onClick={undo}>↶ Annulla</button>
-        <button className="btn sec" onClick={goReplay}>⏮ Replay</button>
+        <button className="btn sec" onClick={undo} disabled={!state.history.length}>↶ Annulla mossa</button>
+        <button className="btn sec" onClick={goReplay} disabled={!state.history.length}>⏪ Replay</button>
       </div>
 
       <section className="card">
