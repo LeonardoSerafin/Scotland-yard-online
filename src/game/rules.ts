@@ -24,10 +24,10 @@ export function defaultConfig(): GameConfig {
 }
 
 export const TRANSPORT_INFO: Record<string, { label: string; color: string }> = {
-  taxi: { label: 'Taxi', color: '#f2c200' },
-  bus: { label: 'Bus', color: '#19a974' },
-  underground: { label: 'Metro', color: '#e53935' },
-  water: { label: 'Battello', color: '#3b6bdb' },
+  taxi: { label: 'Taxi', color: '#f4f4f6' },
+  bus: { label: 'Bus', color: '#2f80ed' },
+  underground: { label: 'Metro', color: '#f5821f' },
+  water: { label: 'Battello', color: '#17b9c9' },
   black: { label: 'Black', color: '#3a3f55' },
   double: { label: 'Doppia', color: '#9aa4c0' },
 };
