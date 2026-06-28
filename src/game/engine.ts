@@ -173,6 +173,13 @@ export function applyMove(prev: GameState, to: number, transport: Transport): Mo
   if (!s.config.freeMode) {
     if ((a.tickets[transport] ?? 0) <= 0) return { state: prev, error: `Biglietto ${transport} esaurito` };
     if (!possibleDestinations(s, a, transport).has(to)) return { state: prev, error: 'Mossa non valida' };
+    // doppia mossa: la seconda tappa deve usare lo stesso mezzo della prima
+    if (a.isMrX && a.secondDone) {
+      const first = s.history[s.history.length - 1];
+      if (first && first.double && first.transport !== transport) {
+        return { state: prev, error: 'Doppia mossa: usa due volte lo stesso mezzo' };
+      }
+    }
   }
 
   // paga il biglietto

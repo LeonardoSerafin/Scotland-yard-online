@@ -50,7 +50,11 @@ export function PlayPanel({
             <div className="transports">
               {(actor.isMrX ? MRX_TRANSPORTS : DET_TRANSPORTS).map((t) => {
                 const n = actor.tickets[t] ?? 0;
-                const disabled = !state.config.freeMode && n <= 0;
+                const forcedT =
+                  actor.isMrX && state.doubleActive && actor.secondDone
+                    ? state.history[state.history.length - 1]?.transport ?? null
+                    : null;
+                const disabled = (!state.config.freeMode && n <= 0) || (forcedT != null && t !== forcedT);
                 return (
                   <button
                     key={t}
@@ -65,6 +69,9 @@ export function PlayPanel({
                 );
               })}
             </div>
+            {actor.isMrX && state.doubleActive && actor.secondDone && (
+              <p className="hint ok-hint">Doppia mossa: la 2ª tappa usa lo stesso mezzo della 1ª.</p>
+            )}
 
             {actor.isMrX && (
               <button

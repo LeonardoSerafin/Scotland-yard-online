@@ -92,6 +92,15 @@ describe('rivelazione e doppia mossa', () => {
     expect(currentActor(m2)!.id).toBe('D1'); // ora tocca agli investigatori
     expect(m2.mrxMoveNo).toBe(2);
   });
+
+  it('la doppia mossa obbliga lo stesso mezzo nelle due tappe', () => {
+    const s = setup({ X: 13, D1: 50, D2: 91 });
+    const armed = toggleDouble(s).state;
+    const m1 = applyMove(armed, 23, 'taxi').state; // 1a tappa: taxi
+    expect(applyMove(m1, 67, 'bus').error).toBeDefined(); // 2a tappa con bus -> rifiutata
+    const ok = applyMove(m1, 37, 'taxi').state; // 2a tappa: taxi -> ok
+    expect(ok.history.length).toBe(2);
+  });
 });
 
 describe('cattura e fine partita', () => {
